@@ -18,7 +18,7 @@ use IO::Socket;
 use Net::Cmd;
 use Digest::MD5 qw(md5_hex);
 
-$VERSION = '0.02';
+$VERSION = '0.03';
 @ISA     = qw(Exporter Net::Cmd IO::Socket::INET);
 
 use constant GROGGS => 'rgtp-serv.groggs.group.cam.ac.uk';
@@ -38,7 +38,7 @@ sub new
 				  Timeout  => defined $args{Timeout}? $args{Timeout}: 120
 				 ) or return undef;
 
-  $self->debug(1) if $args{'Debug'};
+  $self->debug(100) if $args{'Debug'};
 
   $self->response() or die "Couldn't get a response from the server";
 
@@ -55,6 +55,12 @@ sub access_level {
   my $self = shift;
 
   return ${*$self}{'net_rgtp_status'};
+}
+
+sub latest_seq {
+  my $self = shift;
+
+  return ${*$self}{'net_rgtp_latest'};
 }
 
 sub motd {
@@ -144,7 +150,7 @@ sub login {
 
 sub items {
   my $self = shift;
-  my $latest_seq = 0;
+  my $latest_seq = ${*$self}{'net_rgtp_latest'} || 0;
 
   if (defined ${*$self}{'net_rgtp_latest'}) {
     $self->command('INDX', sprintf('#%08x', ${*$self}{'net_rgtp_latest'}+1));
@@ -349,7 +355,7 @@ __END__
     my $item = $rgtp->item($itemid);
 
     print $itemid, ' ', $item->{'subject'}, ' has ',
-      scalar(@{$item->{'text'}}),
+      scalar(@{$item->{'posts'}}),
       " posts.\n";
   }
 
@@ -426,6 +432,12 @@ may be written. 2 means that items may be posted to. 3 means that the
 contents of the items, including posts made by other users, may be
 edited.
 
+=item latest_seq
+
+Returns the highest sequence number which has been seen in the index
+of this server. This may be C<undef> if we have not downloaded the
+index (or if the server is entirely empty).
+
 =item motd
 
 Returns a hashref containing only the key B<posts>, which maps to an
@@ -475,7 +487,7 @@ There will also always be a key B<text>, which contains the text of the post.
 
 C<item> returns C<undef> if the item does not exist.
 
-As a special case, item("motd") is equivalent to calling the C<motd> method.
+As a special case, C<item("motd")> is equivalent to calling the C<motd> method.
 
 =item items
 
@@ -541,7 +553,7 @@ Thomas Thurman <marnanel@marnanel.org>
 
 =head1 CREDITS
 
-Firinel Taranen - for being there to bounce ideas off, and, well, everything.
+Firinel Thurman - for being there to bounce ideas off, and, well, everything.
 
 John Stark - for inventing GROGGS.
 
