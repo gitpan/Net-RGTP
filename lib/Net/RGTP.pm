@@ -18,7 +18,7 @@ use IO::Socket;
 use Net::Cmd;
 use Digest::MD5 qw(md5_hex);
 
-$VERSION = '0.01';
+$VERSION = '0.02';
 @ISA     = qw(Exporter Net::Cmd IO::Socket::INET);
 
 use constant GROGGS => 'rgtp-serv.groggs.group.cam.ac.uk';
@@ -355,36 +355,36 @@ __END__
 
 =head1 DESCRIPTION
 
-  C<Net::RGTP> is a class implementing the RGTP bulletin board protocol,
-  as used in the Cambridge University GROGGS system. At present it provides
-  read-only access only.
+C<Net::RGTP> is a class implementing the RGTP bulletin board protocol,
+as used in the Cambridge University GROGGS system. At present it provides
+read-only access only.
 
-  Future versions of this package will include posting, editing and
-  registration capabilities.
+Future versions of this package will include posting, editing and
+registration capabilities.
 
 =head1 OVERVIEW
 
-  RGTP stands for Reverse Gossip Transfer Protocol. An RGTP board, such
-  as GROGGS, consists essentially of a set of "items", each denoted by
-  an eight-character itemid such as "A1240111". An item consists of a
-  sequence of posts on a given subject, identified by a subject string
-  attached to the item. When an item has reached a certain size,
-  attempting to post to it will instead generate a new item, known as
-  a "continuation" or "child" item, with a new itemid and subject string.
-  RGTP keeps track of which items are children of which parent items,
-  thus allowing long chains of discussion to be built.
+RGTP stands for Reverse Gossip Transfer Protocol. An RGTP board, such
+as GROGGS, consists essentially of a set of "items", each denoted by
+an eight-character itemid such as "A1240111". An item consists of a
+sequence of posts on a given subject, identified by a subject string
+attached to the item. When an item has reached a certain size,
+attempting to post to it will instead generate a new item, known as
+a "continuation" or "child" item, with a new itemid and subject string.
+RGTP keeps track of which items are children of which parent items,
+thus allowing long chains of discussion to be built.
 
-  The first character of itemids was "A" in 1986, the first year of
-  GROGGS's existence, and has been incremented through the alphabet every
-  year since.
+The first character of itemids was "A" in 1986, the first year of
+GROGGS's existence, and has been incremented through the alphabet every
+year since.
 
-  Every user is identified to RGTP by their email address. They are usually
-  identified to the other users by a string known as their "grogname". (These
-  are usually fanciful, and regular contests are held as to the best ones.)
+Every user is identified to RGTP by their email address. They are usually
+identified to the other users by a string known as their "grogname". (These
+are usually fanciful, and regular contests are held as to the best ones.)
 
-  Every action which causes a state change on an RGTP server is given a
-  monotonically increasing sequence number. Most actions are also given
-  timestamps. These are in seconds since midnight UTC, 1 January 1970.
+Every action which causes a state change on an RGTP server is given a
+monotonically increasing sequence number. Most actions are also given
+timestamps. These are in seconds since midnight UTC, 1 January 1970.
 
 =head1 CONSTRUCTOR
 
@@ -428,7 +428,7 @@ edited.
 
 =item motd
 
-Returns a hashref containing only the key "text", which maps to an
+Returns a hashref containing only the key B<posts>, which maps to an
 arrayref containing only one element, a hashref which contains three
 keys:
 
@@ -546,6 +546,9 @@ Firinel Taranen - for being there to bounce ideas off, and, well, everything.
 John Stark - for inventing GROGGS.
 
 Ian Jackson - for inventing RGTP.
+
+Tony Finch - whose RGTP to Atom converter made the idea of this module click
+for me.
 
 =head1 SEE ALSO
 
