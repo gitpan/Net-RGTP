@@ -18,7 +18,7 @@ use IO::Socket;
 use Net::Cmd;
 use Digest::MD5 qw(md5_hex);
 
-$VERSION = '0.03';
+$VERSION = '0.05';
 @ISA     = qw(Exporter Net::Cmd IO::Socket::INET);
 
 use constant GROGGS => 'rgtp-serv.groggs.group.cam.ac.uk';
@@ -35,12 +35,13 @@ sub new
 				  PeerPort => $args{Port} || RGTP,
 				  LocalAddr => $args{'LocalAddr'},
 				  Proto    => 'tcp',
-				  Timeout  => defined $args{Timeout}? $args{Timeout}: 120
+				  Timeout  => defined $args{Timeout}?
+				                  $args{Timeout}: 120
 				 ) or return undef;
 
   $self->debug(100) if $args{'Debug'};
 
-  $self->response() or die "Couldn't get a response from the server";
+  $self->response or die "Couldn't get a response from the server";
 
   ${*$self}{'net_rgtp_groggsbug'} = $self->message =~ /GROGGS system/;
   
@@ -82,10 +83,34 @@ sub item {
   $self->_read_item;
 }
 
+sub quick_item {
+  my ($self, $itemid) = @_;
+
+  return $self->motd if $itemid eq 'motd';
+
+  my %result = ();
+
+  $self->command('STAT', $itemid);
+  $self->response;
+
+  my ($parent, $child, $edit, $reply, $subject) =
+    $self->message =~ /^([A-Za-z]\d{7}|\s{8}) ([A-Za-z]\d{7}|\s{8}) ([0-9a-fA-F]{8}|\s{8}) ([0-9a-fA-F]{8}) (.*)$/;
+
+  $result{'parent' } = $parent    if $parent ne '        ';
+  $result{'child'  } = $child     if $child  ne '        ';
+  $result{'edit'   } = hex($edit) if $edit   ne '        ';
+  $result{'reply'  } = hex($reply);
+  $result{'subject'} = $subject;
+
+  \%result;
+}
+
 sub login {
   my ($self, $userid, $secret) = @_;
 
-  $self->command("USER $userid");
+  $userid ||= 'guest';
+
+  $self->command('USER', $userid);
   $self->response;
 
   # Did they let us in for just saying who we were?
@@ -121,7 +146,11 @@ sub login {
     $munged_userid .= chr(0);
   }
 
-  my $client_nonce = 'SIXTEEN BYTES...';
+  my $client_nonce = '';
+  for (my $i=0; $i<16; $i++) {
+    $client_nonce .= chr(int(rand(256)));
+  }
+
   my $client_hash = md5_hex($client_nonce,
 			    $server_nonce,
 			    $munged_userid,
@@ -185,8 +214,10 @@ sub items {
       ${*$self}{'net_rgtp_childlink'} = $itemid;
     } elsif ($type eq 'F') {
       if (defined ${*$self}{'net_rgtp_childlink'}) {
-	${*$self}{'net_rgtp_index'}{ ${*$self}{'net_rgtp_childlink'} }{'child'} = $itemid;
-	${*$self}{'net_rgtp_index'}{ $itemid }{'parent'} = ${*$self}{'net_rgtp_childlink'};
+	${*$self}{'net_rgtp_index'}
+	  { ${*$self}{'net_rgtp_childlink'} }{'child'} = $itemid;
+	${*$self}{'net_rgtp_index'}
+	  { $itemid }{'parent'} = ${*$self}{'net_rgtp_childlink'};
 	delete ${*$self}{'net_rgtp_childlink'};
       }
     }
@@ -382,7 +413,7 @@ thus allowing long chains of discussion to be built.
 
 The first character of itemids was "A" in 1986, the first year of
 GROGGS's existence, and has been incremented through the alphabet every
-year since.
+year since. (The letter for 2005 is "U".)
 
 Every user is identified to RGTP by their email address. They are usually
 identified to the other users by a string known as their "grogname". (These
@@ -417,12 +448,18 @@ files (e.g. the index, or items) as they transfer.
 
 =over 4
 
-=item login (USERID [, SECRET])
+=item login ([USERID, [SECRET]])
 
-Logs in to the RGTP server. SECRET is the shared-secret which is sent out
-by mail. It should be undef only if you are expecting not to have to go through
-authentication (for example, many RGTP servers have an account called "guest"
-which needs no authentication step).
+Logs in to the RGTP server.
+
+USERID is the user identity to use on the RGTP server, typically an
+email address. If left blank it will default to "guest".
+
+SECRET is the shared-secret which is sent out by mail. It must either be a
+hex string with an even number of digits, or undef.
+It should be undef only if you are expecting not to have to go through
+authentication (for example, on many RGTP servers the account called "guest"
+needs no authentication step).
 
 =item access_level
 
@@ -488,6 +525,18 @@ There will also always be a key B<text>, which contains the text of the post.
 C<item> returns C<undef> if the item does not exist.
 
 As a special case, C<item("motd")> is equivalent to calling the C<motd> method.
+
+=item quick_item(ITEMID)
+
+Similar to the C<item> method, but the hashref returned
+does not contain the key B<posts>. Use this method if you
+only need to know, for example, the item's most recent
+sequence number or its subject line. It executes many times
+faster than the C<item> method, because the content of the
+item does not need to be transferred.
+
+This implements the RGTP function "STAT". The method is not
+called C<stat> because that is a perl builtin.
 
 =item items
 

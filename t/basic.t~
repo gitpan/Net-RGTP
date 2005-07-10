@@ -5,7 +5,7 @@
 #
 # Copyright (c) 2005 Thomas Thurman <marnanel@marnanel.org>
 
-use Test::More tests => 21;
+use Test::More tests => 17;
 use strict;
 use warnings;
 use Net::RGTP;
@@ -43,10 +43,8 @@ ok($rgtp->access_level==0, 'Connected at level 0');
 $rgtp->login('perltest@example.com', 'EFC8258C02690015');
 ok($rgtp->access_level!=0, 'Login with real account');
 
-$rgtp = Net::RGTP->new(Port=>1432,
-		       #Debug=>1
-		      );
-$rgtp->login; # user 'guest', no password
+$rgtp = Net::RGTP->new(Port=>1432);
+$rgtp->login('guest', undef);
 ok($rgtp->access_level==1, "Guest becomes level 1");
 
 ################################################################
@@ -69,20 +67,8 @@ ok($items->{'S1672138'}{'timestamp'} == 1061212751 , 'Item last timestamp');
 
 my $R1262220 = $rgtp->item('R1262220');
 ok($R1262220->{'parent'} eq 'R1262059', 'Post parent');
-ok($R1262220->{'posts'}[0]->{'text'} =~ /If you use a proportional font/,
-   'First post');
-ok($R1262220->{'posts'}[1]->{'text'} =~ /spurious error messages/,
-   'Second post');
-
-################################################################
-# TEST "quick_item" (a.k.a. "STAT")
-
-my $stat = $rgtp->quick_item('K2622347');
-
-ok($stat->{'reply'} == 408, 'quick_item reply seq');
-ok($stat->{'parent'} eq 'K2622248', 'quick_item parent');
-ok($stat->{'child'} eq 'K2630044', 'quick_item child');
-ok($stat->{'subject'} eq 'Fish (2)', 'quick_item subject');
+ok($R1262220->{'posts'}[0]->{'text'} =~ /If you use a proportional font/, 'First post');
+ok($R1262220->{'posts'}[1]->{'text'} =~ /spurious error messages/, 'Second post');
 
 ################################################################
 # TEST "motd"

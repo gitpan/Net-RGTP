@@ -1,3 +1,12 @@
+0.04  2005-07-09
+      quick_item method; userid defaults to "guest";
+      client-nonce really is random
+
+0.03  2005-07-07
+      latest_seq method; misleading "text" key in
+      hashref returned by motd and item methods
+      renamed to "posts".
+
 0.02  2005-07-05
       documentation fixes; directory structure cleanup
 
