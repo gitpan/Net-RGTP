@@ -1,4 +1,9 @@
-0.04  2005-07-09
+0.10  2005-07-18
+      post, item_is_full and item_has_grown methods;
+      more functions return undef and set $@ rather
+      than dying.
+
+0.05  2005-07-09
       quick_item method; userid defaults to "guest";
       client-nonce really is random
 

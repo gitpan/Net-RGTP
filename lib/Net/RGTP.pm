@@ -18,7 +18,7 @@ use IO::Socket;
 use Net::Cmd;
 use Digest::MD5 qw(md5_hex);
 
-$VERSION = '0.05';
+$VERSION = '0.10';
 @ISA     = qw(Exporter Net::Cmd IO::Socket::INET);
 
 use constant GROGGS => 'rgtp-serv.groggs.group.cam.ac.uk';
@@ -41,11 +41,17 @@ sub new
 
   $self->debug(100) if $args{'Debug'};
 
-  $self->response or die "Couldn't get a response from the server";
+  unless ($self->response) {
+    $@ = "Couldn't get a response from the server";
+    return undef;
+  }
 
   ${*$self}{'net_rgtp_groggsbug'} = $self->message =~ /GROGGS system/;
   
-  die "Not an RGTP server" if $self->code()<230 || $self->code()>232;
+  if ($self->code()<230 || $self->code()>232) {
+    $@ = "Not an RGTP server";
+    return undef;
+  }
 
   $self->_set_alvl;
 
@@ -77,7 +83,7 @@ sub item {
 
   return $self->motd if $itemid eq 'motd';
 
-  _is_valid_itemid($itemid);
+  return undef unless _is_valid_itemid($itemid);
 
   $self->command('ITEM', $itemid);
   $self->_read_item;
@@ -115,22 +121,27 @@ sub login {
 
   # Did they let us in for just saying who we were?
   if ($self->code >= 230 && $self->code <= 233) {
-    die 'Unexpected lack of security-- possible man in the middle attack?'
-      if defined $secret;
-    
-    $self->_set_alvl;
+    if (defined $secret) {
+      $@ = 'Unexpected lack of security-- possible man in the middle attack?';
+      return undef;
+    }
 
-    return;
+    return $self->_set_alvl;
   }
 
-  die "Already logged in" if $self->code eq '500';
-  die "Unexpected code" if $self->code ne '130';
+  if ($self->code eq '500') {
+    $@ = 'Already logged in';
+    return undef;
+  }
+  $self->_expect_code('130');
 
   my ($algorithm) = $self->message =~ /^(.*?) /;
-  die "Unknown algorithm: $algorithm" unless $algorithm eq 'MD5';
+  if ($algorithm eq 'MD5') {
+    $@ = "Unknown algorithm: $algorithm";
+  }
 
   $self->response;
-  die "Unexpected code" if $self->code ne '333';
+  $self->_expect_code('333');
   my ($server_nonce) = $self->message =~ /([a-zA-Z0-9]{32})/;
   $server_nonce = pack("H*", $server_nonce);
 
@@ -169,12 +180,14 @@ sub login {
 
   $self->response;
     
-  die "server failed to authenticate to us"
-    unless $server_hash eq substr(lc($self->message), 0, 32);
+  unless ($server_hash eq substr(lc($self->message), 0, 32)) {
+    $@ = "server failed to authenticate to us";
+    return undef;
+  }
 
   $self->response;
 
-  $self->_set_alvl;
+  return $self->_set_alvl;
 }
 
 sub items {
@@ -190,8 +203,11 @@ sub items {
 
   $self->response;
 
-  die "No reading access" if $self->code eq '531';
-  die "Unexpected code" unless $self->code eq '250';
+  if ($self->code eq '531') {
+    $@ = 'No reading access';
+    return undef;
+  }
+  $self->_expect_code('250');
 
   for my $line (@{$self->read_until_dot}) {
     my $seq = hex(substr($line, 0, 8));
@@ -264,6 +280,139 @@ sub state {
   }
 }
 
+sub post {
+
+  my ($self, $itemid, $text, %args) = @_;
+
+  my $grogname = $args{'Grogname'} || ' ';
+  my $seq;
+
+  my $item_was_full = $self->item_is_full;
+
+  delete ${*$self}{'net_rgtp_item_is_full'};
+  delete ${*$self}{'net_rgtp_item_has_grown'};
+
+  $self->command('DATA');
+  $self->response;
+
+  die "No posting access" if $self->code eq '531';
+  $self->_expect_code('150');
+
+  $text =~ s/\n\./\n\.\./g; # dot-doubling
+
+  $self->datasend("$grogname\n");
+  $self->datasend($text);
+  $self->dataend;
+
+  return undef if $self->_malformed_posting;
+  $self->_expect_code('350');
+
+  if ($itemid eq 'new' || $itemid eq 'continue') {
+
+    my $subject = $args{'Subject'}
+      or die "Need a subject line";
+
+    if ($itemid eq 'continue') {
+      die "We haven't reached the end of an item"
+	unless $item_was_full;
+
+      $self->command('CONT', $subject);
+    } else {
+      $self->command('NEWI', $subject);
+    }
+
+    $self->response;
+
+    return undef if $self->_malformed_posting;
+
+    if ($self->code eq '122') {
+      $self->response;
+      $self->_expect_code('422');
+
+      ${*$self}{'net_rgtp_item_has_grown'} = 1;
+      
+      return undef;
+    }
+
+    if ($self->code eq '520') {
+      $@ = 'We haven\'t reached the end of an item';
+    }
+
+    $self->_expect_code('120');
+
+    $self->response;
+    $self->_expect_code('220');
+    ($itemid) = $self->message =~ /^([A-Za-z][0-9]{7})/;
+    # seq is extracted below.
+
+  } elsif ($itemid eq 'motd') {
+
+    $@ = 'Not implemented';
+    return undef;
+
+  } else {
+
+    return undef unless _is_valid_itemid($itemid);
+
+    if (defined $args{'Seq'}) {
+      my $quick = $self->quick_item($itemid);
+
+      if ($quick->{'reply'} != $args{'Seq'}) {
+	$@ = 'Item has apparently grown';
+	${*$self}{'net_rgtp_item_has_grown'} = 1;
+	return undef;
+      }
+    }
+
+    $self->command('REPL', $itemid);
+    $self->response;
+
+    return undef if $self->_malformed_posting;
+
+    if ($self->code eq '421') {
+      # Item is full.
+
+      ${*$self}{'net_rgtp_item_is_full'} = 1;
+      $@ = 'Item is full';
+      return undef;
+    }
+
+    if ($self->code eq '122') {
+      $self->response;
+      $self->_expect_code('422');
+
+      ${*$self}{'net_rgtp_item_has_grown'} = 1;
+      $@ = 'Item has gone into a continuation';
+      return undef;
+    }
+	
+    $self->_expect_code('220');
+
+    # So, success!
+
+  }
+
+  ($seq) = $self->message =~ /([A-Fa-f0-9]{8})  /;
+
+  if (wantarray) {
+    return ($itemid, hex($seq));
+  } else {
+    return $itemid;
+  }
+}
+
+sub item_is_full {
+  my ($self) = @_;
+
+  return defined ${*$self}{'net_rgtp_item_is_full'};
+}
+
+sub item_has_grown {
+  my ($self) = @_;
+
+  return defined ${*$self}{'net_rgtp_item_has_grown'};
+}
+
 ################################################################
 # INTERNAL ROUTINES
 
@@ -278,7 +427,7 @@ sub _read_item {
   $self->response;
   die "No reading access" if $self->code eq '531';
   return undef            if $self->code eq '410';
-  die "Unexpected code"   unless $self->code eq '250';
+  $self->_expect_code('250');
 
   my $status = $self->getline;
 
@@ -311,14 +460,20 @@ sub _read_item {
       
     } else {
       $line =~ s/^\^\^/\^/;
+      $line =~ s/^\.\./\./;
       $current_response->{'text'} .= $line;
     }
   }
+
+  $current_response->{'text'} =~ s/\n\n$/\n/;
 
   push @responses, $current_response;
 
   unless ($args{'no_parse_headers'}) {
     for my $response (@responses) {
+
+      $response->{'text'} =~ s/\n\n$/\n/;
+
       my $username;
       if (($username) = $response->{'text'} =~ /^.* from (.*) at .*\n/) {
 	
@@ -353,7 +508,12 @@ sub _read_item {
 }
 
 sub _is_valid_itemid {
-  die "Invalid itemid" unless shift =~ /^[A-Za-z]\d{7}$/;
+  if (shift =~ /^[A-Za-z]\d{7}$/) {
+    return 1;
+  } else {
+    $@ = 'Invalid itemid';
+    return 0;
+  }
 }
 
 sub _set_alvl {
@@ -365,13 +525,32 @@ sub _set_alvl {
   ${*$self}{'net_rgtp_status'} = $self->code()-230;
 }
 
+sub _expect_code {
+  my ($self, $expectation) = @_;
+
+  if ($self->code ne $expectation) {
+    die "Low-level protocol error: expected $expectation and got ".$self->code;
+  }
+}
+
+sub _malformed_posting {
+
+  my $self = shift;
+
+  if ($self->code eq '423') { $@ = 'Malformed text';     return 1; }
+  if ($self->code eq '424') { $@ = 'Malformed subject';  return 1; }
+  if ($self->code eq '425') { $@ = 'Malformed grogname'; return 1; }
+
+  return 0;
+}
+
 1;
 
 __END__
 
 =head1 NAME
 
-  Net::RGTP - Reverse Gossip client
+Net::RGTP - Reverse Gossip client
 
 =head1 SYNOPSIS
 
@@ -395,9 +574,6 @@ __END__
 C<Net::RGTP> is a class implementing the RGTP bulletin board protocol,
 as used in the Cambridge University GROGGS system. At present it provides
 read-only access only.
-
-Future versions of this package will include posting, editing and
-registration capabilities.
 
 =head1 OVERVIEW
 
@@ -460,6 +636,10 @@ hex string with an even number of digits, or undef.
 It should be undef only if you are expecting not to have to go through
 authentication (for example, on many RGTP servers the account called "guest"
 needs no authentication step).
+
+This method returns the current access level, in the format returned by
+the C<access_level> method. The method returns C<undef> on failure, and
+sets C<$@> to an appropriate message.
 
 =item access_level
 
@@ -577,6 +757,94 @@ this scalar as argument, it re-fills the cache with this data. This
 scalar can be seralised so that the advantages of caching can be
 gained between sessions.
 
+=item post(WHERE, WHAT, [OPTS])
+
+Adds some content to the RGTP board.
+
+WHAT is a block of text wrapped at 80 columns. I recommend the use
+of Text::ASCIITable::Wrap to format arbitrary text in this way.
+
+WHERE can be one of three things:
+
+B<The string C<new>.> In this case WHAT is posted as a new item
+on the server.
+
+B<A valid and existing itemid>. In this case WHAT is appended as
+a reply to the given item.
+
+B<The string C<continue>.> This only works when the continuation
+flag is set (see CONTINUATIONS below). WHAT is posted as the
+first entry in a continuation item.
+
+C<OPTIONS> are passed in a hash-like fashion, using key and value
+pairs. Possible options are:
+
+B<Seq>. The sequence number of the last known reply to this item.
+Ignored when WHAT is C<new> or C<continue>. If this is undefined,
+the sequence number will not be checked. See COLLISIONS below.
+
+B<Grogname>. The grogname to use when posting. If this is undefined,
+no grogname will be used. Grognames which are too long may cause
+the method to return an error.
+
+B<Title>. The title to use for the new item. Required when WHAT is
+C<new> or C<continue>, and ignored at all other times.
+
+On success, in list context, this method returns a list consisting
+of the itemid followed by the sequence number of the post. In
+scalar context, it returns only the itemid.
+
+The method returns C<undef> on failure, and sets C<$@> to an
+appropriate message. It also causes the functions C<item_is_full>
+and C<item_is_grown> to return values which represent the reason
+it failed.
+
+=item item_is_full
+
+Returns true iff the most recent call to C<post> failed because the
+target item had gone into a continuation. This is known as the
+"continuation flag": see CONTINUATIONS below.
+
+=item item_has_grown
+
+Returns true iff the most recent call to C<post> failed because of
+a collision in the target item. See COLLISIONS below.
+
+=head1 CONTINUATIONS
+
+Items have a maximum size. Thus after a certain amount of posting to
+any given item, it will cease to be possible to post any more content.
+When this happens, C<post> will return C<undef>, and set the
+"continuation flag", which may be inspected using the C<item_is_full>
+method.
+
+When the flag is set, and only when the flag is set, it is possible
+to call C<post> again with the WHERE parameter set to C<"continue">.
+This creates a continuation item following on from the item you were
+originally trying to post to.
+
+=head1 COLLISIONS
+
+Because RGTP is not threaded, most users want to check, when they
+reply to an item, that it has not been replied to already while they
+were composing their reply. The lack of a built-in way to do this is
+a fundamental flaw in RGTP; most clients get around the problem by
+doing a STAT (equivalent to our C<quick_item> method) immediately
+before posting, and comparing the sequence number given to one taken
+before the reply was composed. Net::RGTP provides an easy way to
+accomplish this: setting the B<Seq> option to the C<post> command.
+If this check fails, C<post> will return C<undef> and C<item_has_grown>
+will subsequently return true.
+
+However, any such mechanism introduces a race condition into the
+protocol. The chance of a race occurring is slight, and the problems
+caused thereby are small, but programmers should be aware of it.
+
+The only case when RGTP does tell us when an item has been updated
+is when an item has gone into a continuation. In this case C<post>
+and C<item_has_grown> will behave as if B<Seq> had been specified,
+even if it was not.
+
 =head1 UNIMPLEMENTED
 
 The following aspects of RGTP have not been implemented. This will
@@ -584,9 +852,9 @@ be addressed in a later revision:
 
 =over 4
 
-=item Posting
+=item Edit log
 
-Anything to do with posting items.
+Viewing the log of editors' changes to the board.
 
 =item Registration
 

@@ -40,19 +40,21 @@ ok($rgtp->access_level==0, 'Connected at level 0');
 
 # As mentioned above, this requires the existence of this
 # real account on the dev server.
-$rgtp->login('perltest@example.com', 'EFC8258C02690015');
+$rgtp->login('perltest@example.com', 'EFC8258C02690015')
+  or die "Can't log in: $@";
 ok($rgtp->access_level!=0, 'Login with real account');
 
 $rgtp = Net::RGTP->new(Port=>1432,
 		       #Debug=>1
 		      );
-$rgtp->login; # user 'guest', no password
+$rgtp->login # user 'guest', no password
+  or die "Can't log in: $@";
 ok($rgtp->access_level==1, "Guest becomes level 1");
 
 ################################################################
 # TEST "items"
 
-my $items = $rgtp->items;
+my $items = $rgtp->items or die "Can't get index: $@";
 
 # Test the existence of a known item.
 
@@ -67,7 +69,7 @@ ok($items->{'S1672138'}{'timestamp'} == 1061212751 , 'Item last timestamp');
 ################################################################
 # TEST "item"
 
-my $R1262220 = $rgtp->item('R1262220');
+my $R1262220 = $rgtp->item('R1262220') or die "Can't get item: $@";
 ok($R1262220->{'parent'} eq 'R1262059', 'Post parent');
 ok($R1262220->{'posts'}[0]->{'text'} =~ /If you use a proportional font/,
    'First post');
@@ -77,7 +79,7 @@ ok($R1262220->{'posts'}[1]->{'text'} =~ /spurious error messages/,
 ################################################################
 # TEST "quick_item" (a.k.a. "STAT")
 
-my $stat = $rgtp->quick_item('K2622347');
+my $stat = $rgtp->quick_item('K2622347') or die "Can't stat item: $@";
 
 ok($stat->{'reply'} == 408, 'quick_item reply seq');
 ok($stat->{'parent'} eq 'K2622248', 'quick_item parent');
@@ -88,7 +90,7 @@ ok($stat->{'subject'} eq 'Fish (2)', 'quick_item subject');
 # TEST "motd"
 
 # This is a more general test, because it only checks that there *is* a MOTD.
-my $motd = $rgtp->motd;
+my $motd = $rgtp->motd or die "Can't get MOTD: $@";
 ok(defined $motd->{'posts'}[0]->{'seq'}, 'MOTD sequence');
 ok(defined $motd->{'posts'}[0]->{'timestamp'}, 'MOTD timestamp');
 ok(defined $motd->{'posts'}[0]->{'text'}, 'MOTD text');
